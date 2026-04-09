@@ -1,80 +1,100 @@
 import os
 import discord
 from discord.ext import commands
-from discord.ui import View, Button
 
 intents = discord.Intents.default()
-intents.message_content = True
 intents.guilds = True
 intents.members = True
+intents.message_content = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-CATEGORY_NAME = "TICKETS"
-STAFF_ROLE_ID = 1422587221600501780
+# =========================
+# ID RUOLI
+# =========================
+STAFF_ROLE_ID = 1491874337769132074  # Staffer
+PARTNERSHIP_ROLE_ID = 1491874337769132073  # Gestore partnership
 
+# =========================
+# ID CATEGORIA TICKETS
+# =========================
+TICKETS_CATEGORY_ID = 1491904885988397198
 
-def is_staff(member: discord.Member) -> bool:
-    return (
-        member.guild.owner_id == member.id
-        or member.guild_permissions.administrator
-        or any(role.id == STAFF_ROLE_ID for role in member.roles)
-    )
-
-
-class TicketPanelView(View):
+# =========================
+# SELECT MENU CATEGORIE
+# =========================
+class TicketCategorySelect(discord.ui.Select):
     def __init__(self):
-        super().__init__(timeout=None)
+        options = [
+            discord.SelectOption(
+                label="Assistenza",
+                description="Apri un ticket per ricevere aiuto",
+                emoji="🛠️",
+                value="assistenza"
+            ),
+            discord.SelectOption(
+                label="Partnership",
+                description="Apri un ticket per partnership",
+                emoji="🤝",
+                value="partnership"
+            ),
+            discord.SelectOption(
+                label="Segnalazione",
+                description="Apri un ticket per segnalare qualcosa",
+                emoji="🚨",
+                value="segnalazione"
+            ),
+            discord.SelectOption(
+                label="Candidatura Staff",
+                description="Apri un ticket per candidarti staff",
+                emoji="📋",
+                value="candidatura_staff"
+            ),
+        ]
 
-    @discord.ui.button(
-        label="🎫 Apri Ticket",
-        style=discord.ButtonStyle.green,
-        custom_id="open_ticket_button"
-    )
-    async def open_ticket(self, interaction: discord.Interaction, button: Button):
+        super().__init__(
+            placeholder="Scegli la categoria del ticket...",
+            min_values=1,
+            max_values=1,
+            options=options
+        )
+
+    async def callback(self, interaction: discord.Interaction):
         guild = interaction.guild
         user = interaction.user
+        category = guild.get_channel(TICKETS_CATEGORY_ID)
 
-        if guild is None or not isinstance(user, discord.Member):
-            await interaction.response.send_message(
-                "Errore: usa il bottone nel server.",
-                ephemeral=True
-            )
-            return
-
-        staff_role = guild.get_role(STAFF_ROLE_ID)
-        if staff_role is None:
-            await interaction.response.send_message(
-                "Non trovo il ruolo staff.",
-                ephemeral=True
-            )
-            return
-
-        category = discord.utils.get(guild.categories, name=CATEGORY_NAME)
         if category is None:
-            category = await guild.create_category(CATEGORY_NAME)
-
-        safe_name = user.name.lower().replace(" ", "-")
-        channel_name = f"ticket-{safe_name}"
-
-        existing_channel = discord.utils.get(guild.text_channels, name=channel_name)
-        if existing_channel:
             await interaction.response.send_message(
-                f"Hai già un ticket aperto: {existing_channel.mention}",
+                "❌ Categoria ticket non trovata. Controlla l'ID.",
                 ephemeral=True
             )
             return
+
+        selected = self.values[0]
+
+        if selected == "assistenza":
+            channel_name = f"assistenza-{user.name}".lower().replace(" ", "-")
+        elif selected == "partnership":
+            channel_name = f"partnership-{user.name}".lower().replace(" ", "-")
+        elif selected == "segnalazione":
+            channel_name = f"segnalazione-{user.name}".lower().replace(" ", "-")
+        elif selected == "candidatura_staff":
+            channel_name = f"candidatura-{user.name}".lower().replace(" ", "-")
+        else:
+            channel_name = f"ticket-{user.name}".lower().replace(" ", "-")
+
+        for channel in guild.text_channels:
+            if channel.name == channel_name:
+                await interaction.response.send_message(
+                    f"❌ Hai già un ticket aperto: {channel.mention}",
+                    ephemeral=True
+                )
+                return
 
         overwrites = {
             guild.default_role: discord.PermissionOverwrite(view_channel=False),
             user: discord.PermissionOverwrite(
-                view_channel=True,
-                send_messages=True,
-                read_message_history=True,
-                attach_files=True,
-                embed_links=True
-            ),
-            staff_role: discord.PermissionOverwrite(
                 view_channel=True,
                 send_messages=True,
                 read_message_history=True
@@ -82,11 +102,27 @@ class TicketPanelView(View):
             guild.me: discord.PermissionOverwrite(
                 view_channel=True,
                 send_messages=True,
-                read_message_history=True,
                 manage_channels=True,
-                manage_messages=True
+                read_message_history=True
             )
         }
+
+        staff_role = guild.get_role(STAFF_ROLE_ID)
+        partnership_role = guild.get_role(PARTNERSHIP_ROLE_ID)
+
+        if staff_role:
+            overwrites[staff_role] = discord.PermissionOverwrite(
+                view_channel=True,
+                send_messages=True,
+                read_message_history=True
+            )
+
+        if selected == "partnership" and partnership_role:
+            overwrites[partnership_role] = discord.PermissionOverwrite(
+                view_channel=True,
+                send_messages=True,
+                read_message_history=True
+            )
 
         channel = await guild.create_text_channel(
             name=channel_name,
@@ -94,20 +130,60 @@ class TicketPanelView(View):
             overwrites=overwrites
         )
 
+        if selected == "assistenza":
+            description = (
+                f"Ciao {user.mention}, benvenuto nel tuo ticket di **assistenza**.\n\n"
+                "Spiega bene il problema e aspetta una risposta dallo staff."
+            )
+        elif selected == "partnership":
+            description = (
+                f"Ciao {user.mention}, benvenuto nel tuo ticket di **partnership**.\n\n"
+                "Scrivi qui la tua proposta di partnership."
+            )
+        elif selected == "segnalazione":
+            description = (
+                f"Ciao {user.mention}, benvenuto nel tuo ticket di **segnalazione**.\n\n"
+                "Spiega bene cosa vuoi segnalare."
+            )
+        elif selected == "candidatura_staff":
+            description = (
+                f"Ciao {user.mention}, benvenuto nel tuo ticket di **candidatura staff**.\n\n"
+                "**Compila queste domande:**\n"
+                "1. Quanti anni hai?\n"
+                "2. Da quanto usi Discord?\n"
+                "3. Hai già avuto esperienza come staff?\n"
+                "4. Perché vuoi diventare staff?\n"
+                "5. Quanto sei attivo al giorno?\n"
+            )
+        else:
+            description = f"Ciao {user.mention}, benvenuto nel tuo ticket."
+
         embed = discord.Embed(
-            title="🎫 Ticket Aperto",
-            description=(
-                f"Ciao {user.mention}, descrivi qui il tuo problema.\n\n"
-                f"Lo staff {staff_role.mention} può reclamare questo ticket."
-            ),
+            title="🎫 Ticket creato",
+            description=description,
             color=discord.Color.green()
         )
 
-        await channel.send(
-            content=f"{user.mention} {staff_role.mention}",
-            embed=embed,
-            view=TicketControlView(ticket_owner_id=user.id)
-        )
+        view = CloseTicketView()
+
+        if selected == "partnership" and partnership_role:
+            await channel.send(
+                content=f"{user.mention} {partnership_role.mention}",
+                embed=embed,
+                view=view
+            )
+        elif staff_role:
+            await channel.send(
+                content=f"{user.mention} {staff_role.mention}",
+                embed=embed,
+                view=view
+            )
+        else:
+            await channel.send(
+                content=f"{user.mention}",
+                embed=embed,
+                view=view
+            )
 
         await interaction.response.send_message(
             f"✅ Ticket creato: {channel.mention}",
@@ -115,162 +191,85 @@ class TicketPanelView(View):
         )
 
 
-class TicketControlView(View):
-    def __init__(self, ticket_owner_id: int):
+class TicketCategoryView(discord.ui.View):
+    def __init__(self):
         super().__init__(timeout=None)
-        self.ticket_owner_id = ticket_owner_id
-        self.claimed_by_id = None
+        self.add_item(TicketCategorySelect())
 
-    @discord.ui.button(
-        label="📌 Reclama Ticket",
-        style=discord.ButtonStyle.blurple,
-        custom_id="claim_ticket_button"
-    )
-    async def claim_ticket(self, interaction: discord.Interaction, button: Button):
-        guild = interaction.guild
-        channel = interaction.channel
-        user = interaction.user
 
-        if guild is None or channel is None or not isinstance(user, discord.Member):
-            await interaction.response.send_message(
-                "Errore nel claim del ticket.",
-                ephemeral=True
-            )
-            return
+# =========================
+# BOTTONE APRI TICKET
+# =========================
+class OpenTicketView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
 
-        if not is_staff(user):
-            await interaction.response.send_message(
-                "❌ Solo lo staff può reclamare il ticket.",
-                ephemeral=True
-            )
-            return
-
-        if self.claimed_by_id is not None:
-            await interaction.response.send_message(
-                "❌ Questo ticket è già stato reclamato.",
-                ephemeral=True
-            )
-            return
-
-        staff_role = guild.get_role(STAFF_ROLE_ID)
-        if staff_role is None:
-            await interaction.response.send_message(
-                "❌ Non trovo il ruolo staff.",
-                ephemeral=True
-            )
-            return
-
-        ticket_owner = guild.get_member(self.ticket_owner_id)
-        if ticket_owner is None:
-            try:
-                ticket_owner = await guild.fetch_member(self.ticket_owner_id)
-            except Exception:
-                await interaction.response.send_message(
-                    "❌ Non trovo più l'utente che ha aperto il ticket.",
-                    ephemeral=True
-                )
-                return
-
-        await interaction.response.defer()
-
-        self.claimed_by_id = user.id
-
-        # tutto lo staff vede, ma non scrive più
-        await channel.set_permissions(
-            staff_role,
-            view_channel=True,
-            send_messages=False,
-            read_message_history=True
+    @discord.ui.button(label="Apri Ticket", style=discord.ButtonStyle.green, emoji="🎫", custom_id="open_ticket_button")
+    async def open_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
+        embed = discord.Embed(
+            title="Scegli una categoria",
+            description="Seleziona dal menu qui sotto la categoria del tuo ticket.",
+            color=discord.Color.blurple()
+        )
+        await interaction.response.send_message(
+            embed=embed,
+            view=TicketCategoryView(),
+            ephemeral=True
         )
 
-        # chi reclama può scrivere
-        await channel.set_permissions(
-            user,
-            view_channel=True,
-            send_messages=True,
-            read_message_history=True,
-            manage_messages=True
-        )
 
-        # chi ha aperto il ticket continua a scrivere
-        await channel.set_permissions(
-            ticket_owner,
-            view_channel=True,
-            send_messages=True,
-            read_message_history=True,
-            attach_files=True,
-            embed_links=True
-        )
+# =========================
+# BOTTONE CHIUDI TICKET
+# =========================
+class CloseTicketView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
 
-        await channel.send(f"📌 Ticket preso in carico da {user.mention}")
+    @discord.ui.button(label="Chiudi", style=discord.ButtonStyle.red, emoji="🔒", custom_id="close_ticket_button")
+    async def close_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
+        staff_role = interaction.guild.get_role(STAFF_ROLE_ID)
 
-    @discord.ui.button(
-        label="🔒 Chiudi Ticket",
-        style=discord.ButtonStyle.red,
-        custom_id="close_ticket_button"
-    )
-    async def close_ticket(self, interaction: discord.Interaction, button: Button):
-        guild = interaction.guild
-        channel = interaction.channel
-        user = interaction.user
-
-        if guild is None or channel is None or not isinstance(user, discord.Member):
-            await interaction.response.send_message(
-                "Errore nella chiusura ticket.",
-                ephemeral=True
-            )
-            return
-
-        if not is_staff(user):
+        if staff_role not in interaction.user.roles:
             await interaction.response.send_message(
                 "❌ Solo lo staff può chiudere il ticket.",
                 ephemeral=True
             )
             return
 
-        if (
-            self.claimed_by_id is not None
-            and user.id != self.claimed_by_id
-            and guild.owner_id != user.id
-            and not user.guild_permissions.administrator
-        ):
-            await interaction.response.send_message(
-                "❌ Solo chi ha reclamato il ticket può chiuderlo.",
-                ephemeral=True
-            )
-            return
-
-        await interaction.response.send_message("🔒 Chiusura ticket in corso...")
-        await channel.delete()
+        await interaction.response.send_message("🔒 Ticket chiuso...")
+        await interaction.channel.delete()
 
 
-@bot.command()
-async def pannello(ctx):
-    embed = discord.Embed(
-        title="Supporto Ticket",
-        description="Premi il bottone qui sotto per aprire un ticket privato con lo staff.",
-        color=discord.Color.blue()
-    )
-    embed.set_footer(text="Un solo ticket aperto per utente.")
-    await ctx.send(embed=embed, view=TicketPanelView())
-
-
-@bot.command()
-async def debugstaff(ctx):
-    roles_text = ", ".join([f"{r.name} ({r.id})" for r in ctx.author.roles])
-    await ctx.send(
-        f"Owner server: {ctx.guild.owner_id == ctx.author.id}\n"
-        f"Admin: {ctx.author.guild_permissions.administrator}\n"
-        f"Ruolo staff trovato: {any(role.id == STAFF_ROLE_ID for role in ctx.author.roles)}\n"
-        f"STAFF_ROLE_ID attuale: {STAFF_ROLE_ID}\n"
-        f"I tuoi ruoli: {roles_text}"
-    )
-
-
+# =========================
+# READY
+# =========================
 @bot.event
 async def on_ready():
-    bot.add_view(TicketPanelView())
+    bot.add_view(OpenTicketView())
+    bot.add_view(CloseTicketView())
     print(f"Bot online come {bot.user}")
+
+
+# =========================
+# COMANDO PANNELLO
+# =========================
+@bot.command()
+@commands.has_permissions(administrator=True)
+async def panel(ctx):
+    embed = discord.Embed(
+        title="🎫 Supporto Tickets",
+        description=(
+            "Clicca il bottone qui sotto per aprire un ticket.\n\n"
+            "**Categorie disponibili:**\n"
+            "🛠️ Assistenza\n"
+            "🤝 Partnership\n"
+            "🚨 Segnalazione\n"
+            "📋 Candidatura Staff"
+        ),
+        color=discord.Color.blurple()
+    )
+
+    await ctx.send(embed=embed, view=OpenTicketView())
 
 
 bot.run(os.getenv("TOKEN"))
