@@ -3,133 +3,302 @@ import discord
 from discord.ext import commands
 
 intents = discord.Intents.default()
+intents.guilds = True
 intents.members = True
 intents.message_content = True
-intents.guilds = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 # =========================
-# ID
+# ID RUOLI / CATEGORIA
 # =========================
+OWNER_ROLE_ID = 1491874337769132076
+ADMIN_ROLE_ID = 1491874337769132075
 STAFF_ROLE_ID = 1491874337769132074
 PARTNERSHIP_ROLE_ID = 1491874337769132073
+
 TICKETS_CATEGORY_ID = 1491904885988397198
 
-# =========================
-# SELECT MENU
-# =========================
-class TicketSelect(discord.ui.Select):
+
+def safe_name(text: str) -> str:
+    text = text.lower().replace(" ", "-")
+    allowed = "abcdefghijklmnopqrstuvwxyz0123456789-_"
+    return "".join(c for c in text if c in allowed)
+
+
+class CloseTicketView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(
+        label="Chiudi",
+        style=discord.ButtonStyle.red,
+        emoji="🔒",
+        custom_id="close_ticket_button"
+    )
+    async def close_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
+        allowed_roles = {
+            OWNER_ROLE_ID,
+            ADMIN_ROLE_ID,
+            STAFF_ROLE_ID,
+            PARTNERSHIP_ROLE_ID
+        }
+
+        user_role_ids = {role.id for role in interaction.user.roles}
+
+        if not user_role_ids.intersection(allowed_roles):
+            await interaction.response.send_message(
+                "❌ Non puoi chiudere questo ticket.",
+                ephemeral=True
+            )
+            return
+
+        await interaction.response.send_message("🔒 Ticket chiuso...")
+        await interaction.channel.delete()
+
+
+class TicketCategorySelect(discord.ui.Select):
     def __init__(self):
         options = [
-            discord.SelectOption(label="Assistenza", emoji="🛠️", value="assistenza"),
-            discord.SelectOption(label="Partnership", emoji="🤝", value="partnership"),
-            discord.SelectOption(label="Segnalazione", emoji="🚨", value="segnalazione"),
-            discord.SelectOption(label="Candidatura Staff", emoji="📋", value="staff"),
+            discord.SelectOption(
+                label="Assistenza",
+                description="Apri un ticket per ricevere aiuto",
+                emoji="🛠️",
+                value="assistenza"
+            ),
+            discord.SelectOption(
+                label="Partnership",
+                description="Apri un ticket per partnership",
+                emoji="🤝",
+                value="partnership"
+            ),
+            discord.SelectOption(
+                label="Segnalazione",
+                description="Apri un ticket per segnalare qualcosa",
+                emoji="🚨",
+                value="segnalazione"
+            ),
+            discord.SelectOption(
+                label="Candidatura Staff",
+                description="Apri un ticket per candidarti staff",
+                emoji="📋",
+                value="candidatura_staff"
+            ),
         ]
-        super().__init__(placeholder="Scegli categoria...", options=options)
+
+        super().__init__(
+            placeholder="Scegli la categoria del ticket...",
+            min_values=1,
+            max_values=1,
+            options=options,
+            custom_id="ticket_category_select"
+        )
 
     async def callback(self, interaction: discord.Interaction):
         guild = interaction.guild
         user = interaction.user
+
+        if guild is None:
+            await interaction.response.send_message("❌ Errore: server non trovato.", ephemeral=True)
+            return
+
         category = guild.get_channel(TICKETS_CATEGORY_ID)
+        if category is None:
+            await interaction.response.send_message(
+                "❌ Categoria ticket non trovata. Controlla l'ID.",
+                ephemeral=True
+            )
+            return
 
-        if not category:
-            return await interaction.response.send_message("Errore categoria", ephemeral=True)
+        selected = self.values[0]
+        clean_user = safe_name(user.name)
 
-        name = f"{self.values[0]}-{user.name}".lower()
+        if selected == "assistenza":
+            channel_name = f"assistenza-{clean_user}"
+        elif selected == "partnership":
+            channel_name = f"partnership-{clean_user}"
+        elif selected == "segnalazione":
+            channel_name = f"segnalazione-{clean_user}"
+        else:
+            channel_name = f"candidatura-{clean_user}"
 
-        # evita doppio ticket
-        for ch in guild.channels:
-            if ch.name == name:
-                return await interaction.response.send_message("Hai già un ticket!", ephemeral=True)
+        existing = discord.utils.get(guild.text_channels, name=channel_name)
+        if existing:
+            await interaction.response.send_message(
+                f"❌ Hai già un ticket aperto: {existing.mention}",
+                ephemeral=True
+            )
+            return
+
+        bot_member = guild.get_member(bot.user.id)
+        if bot_member is None:
+            await interaction.response.send_message(
+                "❌ Non riesco a trovare il bot nel server.",
+                ephemeral=True
+            )
+            return
 
         overwrites = {
             guild.default_role: discord.PermissionOverwrite(view_channel=False),
-            user: discord.PermissionOverwrite(view_channel=True, send_messages=True),
-            guild.me: discord.PermissionOverwrite(view_channel=True)
+            user: discord.PermissionOverwrite(
+                view_channel=True,
+                send_messages=True,
+                read_message_history=True,
+                attach_files=True
+            ),
+            bot_member: discord.PermissionOverwrite(
+                view_channel=True,
+                send_messages=True,
+                read_message_history=True,
+                manage_channels=True,
+                manage_messages=True
+            )
         }
 
-        staff = guild.get_role(STAFF_ROLE_ID)
-        if staff:
-            overwrites[staff] = discord.PermissionOverwrite(view_channel=True)
+        staff_role = guild.get_role(STAFF_ROLE_ID)
+        owner_role = guild.get_role(OWNER_ROLE_ID)
+        admin_role = guild.get_role(ADMIN_ROLE_ID)
+        partnership_role = guild.get_role(PARTNERSHIP_ROLE_ID)
 
-        if self.values[0] == "partnership":
-            part = guild.get_role(PARTNERSHIP_ROLE_ID)
-            if part:
-                overwrites[part] = discord.PermissionOverwrite(view_channel=True)
+        if owner_role:
+            overwrites[owner_role] = discord.PermissionOverwrite(
+                view_channel=True,
+                send_messages=True,
+                read_message_history=True
+            )
 
-        channel = await guild.create_text_channel(name=name, category=category, overwrites=overwrites)
+        if admin_role:
+            overwrites[admin_role] = discord.PermissionOverwrite(
+                view_channel=True,
+                send_messages=True,
+                read_message_history=True
+            )
+
+        if staff_role:
+            overwrites[staff_role] = discord.PermissionOverwrite(
+                view_channel=True,
+                send_messages=True,
+                read_message_history=True
+            )
+
+        if selected == "partnership" and partnership_role:
+            overwrites[partnership_role] = discord.PermissionOverwrite(
+                view_channel=True,
+                send_messages=True,
+                read_message_history=True
+            )
+
+        channel = await guild.create_text_channel(
+            name=channel_name,
+            category=category,
+            overwrites=overwrites
+        )
+
+        if selected == "assistenza":
+            desc = (
+                f"Ciao {user.mention}, benvenuto nel tuo ticket di **assistenza**.\n\n"
+                "Spiega bene il problema e aspetta una risposta dallo staff."
+            )
+        elif selected == "partnership":
+            desc = (
+                f"Ciao {user.mention}, benvenuto nel tuo ticket di **partnership**.\n\n"
+                "Scrivi qui la tua proposta di partnership."
+            )
+        elif selected == "segnalazione":
+            desc = (
+                f"Ciao {user.mention}, benvenuto nel tuo ticket di **segnalazione**.\n\n"
+                "Spiega bene cosa vuoi segnalare."
+            )
+        else:
+            desc = (
+                f"Ciao {user.mention}, benvenuto nel tuo ticket di **candidatura staff**.\n\n"
+                "**Compila queste domande:**\n"
+                "1. Quanti anni hai?\n"
+                "2. Da quanto usi Discord?\n"
+                "3. Hai già avuto esperienza come staff?\n"
+                "4. Perché vuoi diventare staff?\n"
+                "5. Quanto sei attivo al giorno?\n"
+            )
 
         embed = discord.Embed(
-            title="🎫 Ticket",
-            description=f"{user.mention} spiega il problema.\nCategoria: **{self.values[0]}**",
+            title="🎫 Ticket creato",
+            description=desc,
             color=discord.Color.green()
         )
 
-        await channel.send(content=f"{user.mention}", embed=embed, view=CloseView())
+        mentions = [user.mention]
 
-        await interaction.response.send_message(f"Ticket creato: {channel.mention}", ephemeral=True)
+        if selected == "partnership" and partnership_role:
+            mentions.append(partnership_role.mention)
+        else:
+            if staff_role:
+                mentions.append(staff_role.mention)
+
+        await channel.send(
+            content=" ".join(mentions),
+            embed=embed,
+            view=CloseTicketView()
+        )
+
+        await interaction.response.send_message(
+            f"✅ Ticket creato: {channel.mention}",
+            ephemeral=True
+        )
 
 
-class TicketView(discord.ui.View):
+class TicketCategoryView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
-        self.add_item(TicketSelect())
+        self.add_item(TicketCategorySelect())
 
 
-# =========================
-# BOTTONE APRI
-# =========================
-class OpenView(discord.ui.View):
+class OpenTicketView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
 
-    @discord.ui.button(label="Apri Ticket", style=discord.ButtonStyle.green, emoji="🎫")
-    async def open(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message("Scegli categoria:", view=TicketView(), ephemeral=True)
+    @discord.ui.button(
+        label="Apri Ticket",
+        style=discord.ButtonStyle.green,
+        emoji="🎫",
+        custom_id="open_ticket_button"
+    )
+    async def open_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
+        embed = discord.Embed(
+            title="Scegli una categoria",
+            description="Seleziona dal menu qui sotto la categoria del tuo ticket.",
+            color=discord.Color.blurple()
+        )
+        await interaction.response.send_message(
+            embed=embed,
+            view=TicketCategoryView(),
+            ephemeral=True
+        )
 
 
-# =========================
-# CHIUDI
-# =========================
-class CloseView(discord.ui.View):
-    def __init__(self):
-        super().__init__(timeout=None)
-
-    @discord.ui.button(label="Chiudi", style=discord.ButtonStyle.red, emoji="🔒")
-    async def close(self, interaction: discord.Interaction, button: discord.ui.Button):
-        staff = interaction.guild.get_role(STAFF_ROLE_ID)
-
-        if staff not in interaction.user.roles:
-            return await interaction.response.send_message("Solo staff!", ephemeral=True)
-
-        await interaction.response.send_message("Chiudo...")
-        await interaction.channel.delete()
-
-
-# =========================
-# READY
-# =========================
 @bot.event
 async def on_ready():
-    bot.add_view(OpenView())
-    bot.add_view(CloseView())
-    print(f"Bot online {bot.user}")
+    bot.add_view(OpenTicketView())
+    bot.add_view(CloseTicketView())
+    bot.add_view(TicketCategoryView())
+    print(f"Bot online come {bot.user}")
 
 
-# =========================
-# COMANDO
-# =========================
 @bot.command()
 async def ticket(ctx):
     embed = discord.Embed(
-        title="🎫 Ticket Supporto",
-        description="Premi il bottone per aprire un ticket.",
+        title="🎫 Supporto Tickets",
+        description=(
+            "Clicca il bottone qui sotto per aprire un ticket.\n\n"
+            "**Categorie disponibili:**\n"
+            "🛠️ Assistenza\n"
+            "🤝 Partnership\n"
+            "🚨 Segnalazione\n"
+            "📋 Candidatura Staff"
+        ),
         color=discord.Color.blurple()
     )
 
-    await ctx.send(embed=embed, view=OpenView())
+    await ctx.send(embed=embed, view=OpenTicketView())
 
 
 bot.run(os.getenv("TOKEN"))
