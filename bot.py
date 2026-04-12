@@ -16,7 +16,7 @@ intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 # =========================
-# CONFIG SERVER JUSTCHILL
+# CONFIG SERVER
 # =========================
 SERVER_NAME = "JustChill"
 
@@ -25,6 +25,7 @@ SERVER_NAME = "JustChill"
 # =========================
 STAFF_ROLE_ID = 1491874337769132074
 PARTNERSHIP_ROLE_ID = 1491874337769132073
+CO_OWNER_ROLE_ID = 1492661581383733459
 
 # =========================
 # ID CATEGORIA TICKETS
@@ -65,17 +66,19 @@ class CloseTicketView(discord.ui.View):
             return
 
         staff_role = guild.get_role(STAFF_ROLE_ID)
+        co_owner_role = guild.get_role(CO_OWNER_ROLE_ID)
 
-        if staff_role is None:
-            await interaction.response.send_message(
-                "❌ Errore: ruolo staff non trovato.",
-                ephemeral=True
-            )
-            return
+        allowed = False
 
-        if staff_role not in user.roles:
+        if staff_role is not None and staff_role in user.roles:
+            allowed = True
+
+        if co_owner_role is not None and co_owner_role in user.roles:
+            allowed = True
+
+        if not allowed:
             await interaction.response.send_message(
-                "❌ Solo lo staff di JustChill può chiudere il ticket.",
+                f"❌ Solo lo staff di {SERVER_NAME} può chiudere il ticket.",
                 ephemeral=True
             )
             return
@@ -188,9 +191,18 @@ class TicketCategorySelect(discord.ui.Select):
 
         staff_role = guild.get_role(STAFF_ROLE_ID)
         partnership_role = guild.get_role(PARTNERSHIP_ROLE_ID)
+        co_owner_role = guild.get_role(CO_OWNER_ROLE_ID)
 
         if staff_role is not None:
             overwrites[staff_role] = discord.PermissionOverwrite(
+                view_channel=True,
+                send_messages=True,
+                read_message_history=True,
+                attach_files=True
+            )
+
+        if co_owner_role is not None:
+            overwrites[co_owner_role] = discord.PermissionOverwrite(
                 view_channel=True,
                 send_messages=True,
                 read_message_history=True,
@@ -268,6 +280,9 @@ class TicketCategorySelect(discord.ui.Select):
         ticket_embed.set_footer(text=f"{SERVER_NAME} • Sistema Ticket")
 
         mentions = [user.mention]
+
+        if co_owner_role is not None:
+            mentions.append(co_owner_role.mention)
 
         if selected_category == "partnership" and partnership_role is not None:
             mentions.append(partnership_role.mention)
